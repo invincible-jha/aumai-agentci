@@ -9,6 +9,7 @@ validate  Validate test YAML files without running them.
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from pathlib import Path
 from typing import Any
@@ -244,13 +245,18 @@ def test_command(
     except Exception as exc:
         raise click.ClickException(f"Test run failed: {exc}") from exc
 
-    # Select and run reporter
-    output_stream = (
-        open(out_file, "w", encoding="utf-8")  # noqa: SIM115
-        if out_file
-        else sys.stdout
-    )
-    try:
+    # Select and run reporter.
+    # ExitStack lets us manage the output file (when --out-file is given) in a
+    # context manager without special-casing sys.stdout, which must never be
+    # closed.  The stack is a no-op when writing to stdout.
+    with contextlib.ExitStack() as stack:
+        if out_file:
+            output_stream = stack.enter_context(
+                open(out_file, "w", encoding="utf-8")  # noqa: WPS515
+            )
+        else:
+            output_stream = sys.stdout
+
         if output_format == "json":
             reporter: ConsoleReporter | JSONReporter | JUnitReporter = JSONReporter()
         elif output_format == "junit":
@@ -259,9 +265,6 @@ def test_command(
             reporter = ConsoleReporter()
 
         reporter.report(suite_result, stream=output_stream)
-    finally:
-        if out_file and output_stream is not sys.stdout:
-            output_stream.close()
 
     # Exit with non-zero code when any tests failed
     if suite_result.failed > 0:
@@ -296,7 +299,8 @@ def init_command(directory: str, force: bool) -> None:
     tests_file = target / "sample_tests.yaml"
     mock_file = target / "mock_config.yaml"
 
-    for path, content in [(tests_file, _SAMPLE_TESTS_YAML), (mock_file, _SAMPLE_MOCK_YAML)]:
+    file_pairs = [(tests_file, _SAMPLE_TESTS_YAML), (mock_file, _SAMPLE_MOCK_YAML)]
+    for path, content in file_pairs:
         if path.exists() and not force:
             click.echo(f"  skip  {path} (already exists — use --force to overwrite)")
             continue

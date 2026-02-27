@@ -169,5 +169,5 @@ def load_test_suite(path: str) -> list[AgentTestCase]:
     if target.is_dir():
         return runner.load_tests(str(target))
 
-    # Single file — delegate to the private loader
-    return runner._load_yaml_file(target)  # noqa: SLF001
+    # Single file — delegate to the public loader.
+    return runner.load_yaml_file(target)

@@ -9,12 +9,16 @@ from typing import Any
 
 import yaml
 
+# Maximum YAML file size accepted by _load_yaml_file (10 MB by default).
+# Prevents memory exhaustion from accidentally loading enormous files.
+MAX_YAML_SIZE: int = 10 * 1024 * 1024  # 10 MB
+
 from aumai_agentci.assertions import (
     assert_calls_tool,
     assert_contains_text,
+    assert_matches_schema,
     assert_max_latency,
     assert_max_tokens,
-    assert_matches_schema,
     assert_no_pii,
     assert_valid_json,
 )
@@ -149,8 +153,52 @@ class AgentTestRunner:
 
         return test_cases
 
-    def _load_yaml_file(self, path: Path) -> list[AgentTestCase]:
-        """Parse a single YAML file into one or more test cases."""
+    def load_yaml_file(
+        self, path: Path, max_size: int = MAX_YAML_SIZE
+    ) -> list[AgentTestCase]:
+        """Parse a single YAML file into one or more test cases.
+
+        This is the public counterpart of the internal loader.  External
+        callers (e.g. :func:`aumai_agentci.fixtures.load_test_suite`) should
+        use this method instead of the private ``_load_yaml_file`` so that
+        refactoring the implementation does not silently break callers.
+
+        Args:
+            path: Path to the YAML file to load.
+            max_size: Maximum permitted file size in bytes.  Defaults to
+                :data:`MAX_YAML_SIZE` (10 MB).  Pass a smaller value in
+                tests to exercise the guard without creating large files.
+
+        Raises:
+            ValueError: If the file exceeds *max_size* bytes.
+            ValueError: If the YAML structure is not a mapping or list.
+            ValueError: If any record fails Pydantic validation.
+        """
+        return self._load_yaml_file(path, max_size)
+
+    def _load_yaml_file(
+        self, path: Path, max_size: int = MAX_YAML_SIZE
+    ) -> list[AgentTestCase]:
+        """Internal implementation — prefer :meth:`load_yaml_file` for external use.
+
+        Args:
+            path: Path to the YAML file to load.
+            max_size: Maximum permitted file size in bytes.  Defaults to
+                :data:`MAX_YAML_SIZE` (10 MB).  Pass a smaller value in
+                tests to exercise the guard without creating large files.
+
+        Raises:
+            ValueError: If the file exceeds *max_size* bytes.
+            ValueError: If the YAML structure is not a mapping or list.
+            ValueError: If any record fails Pydantic validation.
+        """
+        file_size = path.stat().st_size
+        if file_size > max_size:
+            raise ValueError(
+                f"YAML file exceeds {max_size:,} byte limit "
+                f"({file_size:,} bytes): {path}"
+            )
+
         with path.open(encoding="utf-8") as fh:
             raw = yaml.safe_load(fh)
 
@@ -324,7 +372,9 @@ class AgentTestRunner:
             schema = behavior["matches_schema"]
             if isinstance(schema, dict):
                 if assert_matches_schema(actual_output, schema):
-                    assertions_passed.append("matches_schema: output conforms to schema")
+                    assertions_passed.append(
+                        "matches_schema: output conforms to schema"
+                    )
                 else:
                     assertions_failed.append(
                         "matches_schema: output does not conform to schema"
@@ -360,7 +410,9 @@ class AgentTestRunner:
 
         results: list[AgentTestResult]
         if config.parallel:
-            results = self._run_parallel(test_cases, mock_config, config.timeout_seconds)
+            results = self._run_parallel(
+                test_cases, mock_config, config.timeout_seconds
+            )
         else:
             provider = MockLLMProvider(mock_config)
             results = [
@@ -385,7 +437,13 @@ class AgentTestRunner:
         mock_config: MockLLMConfig,
         timeout_seconds: float,
     ) -> list[AgentTestResult]:
-        """Run test cases in parallel threads, each with its own provider."""
+        """Run test cases in parallel threads, each with its own provider.
+
+        Timeout and unexpected thread exceptions are caught and converted to
+        failed :class:`AgentTestResult` objects so that the suite can still
+        report a complete result set rather than propagating an unhelpful
+        ``concurrent.futures.TimeoutError`` or bare exception to the caller.
+        """
         import concurrent.futures
 
         def _run_one(tc: AgentTestCase) -> AgentTestResult:
@@ -398,7 +456,35 @@ class AgentTestRunner:
             for future in concurrent.futures.as_completed(
                 futures, timeout=timeout_seconds
             ):
-                results.append(future.result())
+                tc = futures[future]
+                try:
+                    results.append(future.result())
+                except concurrent.futures.TimeoutError:
+                    results.append(
+                        AgentTestResult(
+                            test_case_name=tc.name,
+                            passed=False,
+                            actual_output="ERROR: test timed out",
+                            assertions_passed=[],
+                            assertions_failed=[
+                                f"timeout: test exceeded {timeout_seconds}s limit"
+                            ],
+                            duration_ms=timeout_seconds * 1000.0,
+                            tokens_used=0,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    results.append(
+                        AgentTestResult(
+                            test_case_name=tc.name,
+                            passed=False,
+                            actual_output=f"ERROR: {exc}",
+                            assertions_passed=[],
+                            assertions_failed=[f"thread_error: {exc}"],
+                            duration_ms=0.0,
+                            tokens_used=0,
+                        )
+                    )
         return results
 
 

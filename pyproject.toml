@@ -53,6 +53,14 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "N", "UP", "ANN", "S", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",   # assert is idiomatic in pytest
+    "S314",   # xml.etree is fine for test-generated (trusted) XML
+    "ANN",    # type annotations not required in test functions
+    "N802",   # function names may start with uppercase (e.g. TestClass methods)
+]
+
 [tool.mypy]
 strict = true
 python_version = "3.11"
@@ -60,3 +68,4 @@ python_version = "3.11"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["src"]

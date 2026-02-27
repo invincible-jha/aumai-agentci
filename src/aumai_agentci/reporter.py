@@ -127,7 +127,8 @@ class ConsoleReporter(BaseReporter):
 
     def _format_summary(self, suite: TestSuiteResult, stream: TextIO) -> str:
         passed_str = _colour(str(suite.passed), _GREEN, stream)
-        failed_str = _colour(str(suite.failed), _RED if suite.failed else _GREEN, stream)
+        failed_colour = _RED if suite.failed else _GREEN
+        failed_str = _colour(str(suite.failed), failed_colour, stream)
         total_str = _colour(str(suite.total), _CYAN, stream)
         duration = _colour(f"{suite.duration_ms:.1f} ms", _DIM, stream)
         return (

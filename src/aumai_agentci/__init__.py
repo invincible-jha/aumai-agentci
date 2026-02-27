@@ -5,9 +5,9 @@ from __future__ import annotations
 from aumai_agentci.assertions import (
     assert_calls_tool,
     assert_contains_text,
+    assert_matches_schema,
     assert_max_latency,
     assert_max_tokens,
-    assert_matches_schema,
     assert_no_pii,
     assert_valid_json,
 )

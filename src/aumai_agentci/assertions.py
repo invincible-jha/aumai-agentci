@@ -95,13 +95,37 @@ def assert_calls_tool(output: str, tool_name: str) -> bool:
     except (json.JSONDecodeError, ValueError):
         pass
 
-    # Plain-text / markdown heuristics
+    # Plain-text / markdown heuristics.
+    #
+    # Design note — AC-05: the final ``\b{tool_name}\b`` pattern is kept as
+    # a last-resort fallback for free-text agent outputs that mention a tool
+    # by name without structured formatting.  Word-boundary anchors reduce
+    # false positives compared to a plain substring match, but they cannot
+    # prevent a match where *tool_name* is a strict prefix of a longer name
+    # (e.g. "search" matching inside "search_extended") when the longer name
+    # contains underscores, because ``\b`` does not treat underscores as word
+    # boundaries.
+    #
+    # When the test framework records tool calls as structured data the JSON
+    # parsing path above (which performs exact string equality on "name")
+    # should be the primary match path and is not subject to this limitation.
+    # Callers that need guaranteed precision should ensure their mock LLM
+    # responses emit structured JSON tool-call objects.
+    escaped = re.escape(tool_name)
     patterns: list[str] = [
-        rf'["\']tool["\']\s*:\s*["\']?{re.escape(tool_name)}["\']?',
-        rf'["\']name["\']\s*:\s*["\']?{re.escape(tool_name)}["\']?',
-        rf"{re.escape(tool_name)}\s*\(",
-        rf"<{re.escape(tool_name)}>",
-        rf"\b{re.escape(tool_name)}\b",
+        # Quoted key-value pair: "tool": "tool_name" or 'name': 'tool_name'
+        rf'["\']tool["\']\s*:\s*["\']{escaped}["\']',
+        rf'["\']name["\']\s*:\s*["\']{escaped}["\']',
+        # Function-call syntax:  tool_name(
+        rf"{escaped}\s*\(",
+        # XML-tag style:  <tool_name>
+        rf"<{escaped}>",
+        # Fallback: whole-word mention in plain text.
+        # Limitation: underscores are not treated as word separators by \b,
+        # so "search" will NOT match inside "search_web" (which is correct),
+        # but "search_web" WILL match inside "search_web_v2" (false positive).
+        # Prefer structured JSON responses to avoid this ambiguity.
+        rf"\b{escaped}\b",
     ]
     for pattern in patterns:
         if re.search(pattern, output, re.IGNORECASE):
